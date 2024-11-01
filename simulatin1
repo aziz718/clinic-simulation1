@@ -1,0 +1,122 @@
+import simpy
+import random
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Constants
+SIM_TIME = 1000             # Total simulation time in minutes
+TREATMENT_TIME_MIN = 5      # Minimum treatment time in minutes
+TREATMENT_TIME_MAX = 15     # Maximum treatment time in minutes
+PATIENT_ARRIVAL_RATE = 5    # Average patient arrival rate (patients per minute)
+MAX_WAIT_TIME = 30          # Maximum time a patient can wait before leaving
+
+class Clinic:
+    def __init__(self, env, num_doctors):
+        self.env = env
+        self.num_doctors = simpy.Resource(env, num_doctors)
+
+    def treat_patient(self):
+        """Process for treating a patient."""
+        treatment_time = random.uniform(TREATMENT_TIME_MIN, TREATMENT_TIME_MAX)
+        yield self.env.timeout(treatment_time)
+        treatment_times.append(treatment_time)
+
+def patient(env, patient_id, clinic):
+    """Patient process: arrives, waits, and may leave if wait is too long."""
+    global patients_left, total_patients
+    arrival_time = env.now
+    with clinic.num_doctors.request() as request:
+        result = yield request | env.timeout(MAX_WAIT_TIME)
+        if request in result:
+            # Patient begins treatment
+            wait_time = env.now - arrival_time
+            waiting_times.append(wait_time)
+            yield env.process(clinic.treat_patient())
+            total_patients += 1
+        else:
+            # Patient leaves due to long wait time
+            patients_left += 1
+
+def setup(env, num_doctors):
+    """Sets up the clinic and generates patients."""
+    clinic = Clinic(env, num_doctors)
+    patient_id = 0
+    while True:
+        yield env.timeout(random.expovariate(1.0 / PATIENT_ARRIVAL_RATE))
+        patient_id += 1
+        env.process(patient(env, patient_id, clinic))
+
+def run_simulation(sim_time, num_doctors):
+    """Runs the clinic simulation."""
+    global waiting_times, treatment_times, patients_left, total_patients
+    waiting_times, treatment_times, patients_left, total_patients = [], [], 0, 0
+    env = simpy.Environment()
+    env.process(setup(env, num_doctors))
+    env.run(until=sim_time)
+    return waiting_times, treatment_times, patients_left, total_patients
+
+def visualize_clinic_metrics(waiting_times, treatment_times, patients_left, num_doctors):
+    """
+    Create three histograms showing clinic metrics in a clean, simple style
+    """
+    plt.style.use('default')
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12))
+    
+    # Treatment Times Histogram
+    ax1.hist(treatment_times, bins=15, color='lightblue', edgecolor='white')
+    ax1.set_title('Time Doctors Spend with Patients')
+    ax1.set_xlabel('Time (minutes)')
+    ax1.set_ylabel('Number of Treatments')
+    
+    # Waiting Times Histogram
+    ax2.hist(waiting_times, bins=15, color='lightgreen', edgecolor='white')
+    ax2.set_title('Patient Waiting Time')
+    ax2.set_xlabel('Waiting Time (minutes)')
+    ax2.set_ylabel('Number of Patients')
+    
+    # Patients Who Left Bar
+    ax3.bar(['Left Without Waiting'], [patients_left], color='lightcoral', edgecolor='white')
+    ax3.set_title('Patients Who Left Without Waiting')
+    ax3.set_ylabel('Number of Patients')
+    
+    # Adjust layout and styling
+    plt.tight_layout(pad=2.0)
+    
+    # Clean up the appearance
+    for ax in [ax1, ax2, ax3]:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.tick_params(labelsize=10)
+    
+    plt.savefig(f'clinic_metrics_{num_doctors}_doctors.png', bbox_inches='tight', dpi=300)
+    plt.show()
+
+# Run simulations
+for num_doctors in [1, 2]:
+    total_patients_left = 0
+    all_waiting_times = []
+    all_treatment_times = []
+    total_patients_arrived = 0
+    num_repetitions = 5
+
+    for _ in range(num_repetitions):
+        waiting_times, treatment_times, patients_left, patients_served = run_simulation(
+            SIM_TIME, num_doctors
+        )
+        total_patients_left += patients_left
+        all_waiting_times.extend(waiting_times)
+        all_treatment_times.extend(treatment_times)
+        total_patients_arrived += patients_served + patients_left
+
+    # Print statistics
+    avg_waiting_time = sum(all_waiting_times) / len(all_waiting_times) if all_waiting_times else 0
+    avg_treatment_time = sum(all_treatment_times) / len(all_treatment_times) if all_treatment_times else 0
+
+    print(f"\nRunning simulation with {num_doctors} doctor(s):")
+    print(f"Total Patients Left: {total_patients_left}")
+    print(f"Average Waiting Time: {avg_waiting_time:.2f} minutes")
+    print(f"Average Treatment Time: {avg_treatment_time:.2f} minutes")
+    print(f"Total Patients Arrived: {total_patients_arrived}")
+
+    # Create visualizations
+    visualize_clinic_metrics(all_waiting_times, all_treatment_times, total_patients_left, num_doctors)
