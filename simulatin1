@@ -7,8 +7,12 @@ import numpy as np
 SIM_TIME = 1000             # Total simulation time in minutes
 TREATMENT_TIME_MIN = 5      # Minimum treatment time in minutes
 TREATMENT_TIME_MAX = 15     # Maximum treatment time in minutes
-PATIENT_ARRIVAL_RATE = 5    # Average patient arrival rate (patients per minute)
+BASE_PATIENT_ARRIVAL_RATE = 3    # Average patient arrival rate (patients per minute) for off-peak hours
+PEAK_PATIENT_ARRIVAL_RATE = 1    # Higher arrival rate (patients per minute) during peak hours
 MAX_WAIT_TIME = 30          # Maximum time a patient can wait before leaving
+CLINIC_OPENING_HOUR = 7     # Clinic opening time in hours (7 AM)
+PEAK_START_HOUR = 10        # Start of peak hours (10 AM)
+PEAK_END_HOUR = 13          # End of peak hours (1 PM)
 
 class Clinic:
     def __init__(self, env, num_doctors):
@@ -23,8 +27,10 @@ class Clinic:
 
 def patient(env, patient_id, clinic):
     """Patient process: arrives, waits, and may leave if wait is too long."""
-    global patients_left, total_patients
+    global patients_left, total_patients, arrival_hours
     arrival_time = env.now
+    arrival_hour = CLINIC_OPENING_HOUR + int(arrival_time // 60)  # Adjust to actual hour
+    arrival_hours.append(arrival_hour)
     with clinic.num_doctors.request() as request:
         result = yield request | env.timeout(MAX_WAIT_TIME)
         if request in result:
@@ -42,70 +48,93 @@ def setup(env, num_doctors):
     clinic = Clinic(env, num_doctors)
     patient_id = 0
     while True:
-        yield env.timeout(random.expovariate(1.0 / PATIENT_ARRIVAL_RATE))
+        current_hour = CLINIC_OPENING_HOUR + int(env.now // 60)
+        
+        # Determine arrival rate based on peak hours
+        if PEAK_START_HOUR <= current_hour < PEAK_END_HOUR:
+            arrival_rate = PEAK_PATIENT_ARRIVAL_RATE
+        else:
+            arrival_rate = BASE_PATIENT_ARRIVAL_RATE
+
+        yield env.timeout(random.expovariate(1.0 / arrival_rate))
         patient_id += 1
         env.process(patient(env, patient_id, clinic))
 
 def run_simulation(sim_time, num_doctors):
     """Runs the clinic simulation."""
-    global waiting_times, treatment_times, patients_left, total_patients
+    global waiting_times, treatment_times, patients_left, total_patients, arrival_hours
     waiting_times, treatment_times, patients_left, total_patients = [], [], 0, 0
+    arrival_hours = []  # Track the hours patients arrive
     env = simpy.Environment()
     env.process(setup(env, num_doctors))
     env.run(until=sim_time)
-    return waiting_times, treatment_times, patients_left, total_patients
+    return waiting_times, treatment_times, patients_left, total_patients, arrival_hours
 
-def visualize_clinic_metrics(waiting_times, treatment_times, patients_left, num_doctors):
+def visualize_clinic_metrics(waiting_times, treatment_times, patients_left, arrival_hours, num_doctors):
     """
-    Create three histograms showing clinic metrics in a clean, simple style
+    Create four histograms showing clinic metrics and peak hours in a clean, simple style
+    and save the figure as a PDF.
     """
     plt.style.use('default')
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 12))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(8, 16))
     
     # Treatment Times Histogram
     ax1.hist(treatment_times, bins=15, color='lightblue', edgecolor='white')
-    ax1.set_title('Time Doctors Spend with Patients')
-    ax1.set_xlabel('Time (minutes)')
-    ax1.set_ylabel('Number of Treatments')
+    ax1.set_title('Time Doctors Spend with Patients', fontsize=14)
+    ax1.set_xlabel('Time (minutes)', fontsize=12)
+    ax1.set_ylabel('Number of Treatments', fontsize=12)
     
     # Waiting Times Histogram
     ax2.hist(waiting_times, bins=15, color='lightgreen', edgecolor='white')
-    ax2.set_title('Patient Waiting Time')
-    ax2.set_xlabel('Waiting Time (minutes)')
-    ax2.set_ylabel('Number of Patients')
+    ax2.set_title('Patient Waiting Time', fontsize=14)
+    ax2.set_xlabel('Waiting Time (minutes)', fontsize=12)
+    ax2.set_ylabel('Number of Patients', fontsize=12)
     
     # Patients Who Left Bar
     ax3.bar(['Left Without Waiting'], [patients_left], color='lightcoral', edgecolor='white')
-    ax3.set_title('Patients Who Left Without Waiting')
-    ax3.set_ylabel('Number of Patients')
+    ax3.set_title('Patients Who Left Without Waiting', fontsize=14)
+    ax3.set_ylabel('Number of Patients', fontsize=12)
     
+    # Peak Hours Histogram
+    ax4.hist(arrival_hours, bins=range(CLINIC_OPENING_HOUR, CLINIC_OPENING_HOUR + 17), color='goldenrod', edgecolor='white', align='left')
+    ax4.set_title('Peak Hours of Patient Arrivals', fontsize=14)
+    ax4.set_xlabel('Hour of Day', fontsize=12)
+    ax4.set_ylabel('Number of Arrivals', fontsize=12)
+    
+    # Highlight peak hour range
+    ax4.axvspan(PEAK_START_HOUR, PEAK_END_HOUR, color='lightgrey', alpha=0.3, label='Peak Hours')
+    ax4.legend()
+
     # Adjust layout and styling
     plt.tight_layout(pad=2.0)
     
     # Clean up the appearance
-    for ax in [ax1, ax2, ax3]:
+    for ax in [ax1, ax2, ax3, ax4]:
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
         ax.tick_params(labelsize=10)
     
-    plt.savefig(f'clinic_metrics_{num_doctors}_doctors.png', bbox_inches='tight', dpi=300)
+    # Save as PDF
+    plt.savefig(f'clinic_metrics_{num_doctors}_doctors.pdf', bbox_inches='tight', dpi=300)
     plt.show()
 
-# Run simulations
-for num_doctors in [1, 2]:
+# Run simulations for both 1 doctor and 2 doctors
+for num_doctors in [1, 2]:  # Running for 1 doctor and 2 doctors
     total_patients_left = 0
     all_waiting_times = []
     all_treatment_times = []
+    total_arrival_hours = []
     total_patients_arrived = 0
     num_repetitions = 5
 
     for _ in range(num_repetitions):
-        waiting_times, treatment_times, patients_left, patients_served = run_simulation(
+        waiting_times, treatment_times, patients_left, patients_served, arrival_hours = run_simulation(
             SIM_TIME, num_doctors
         )
         total_patients_left += patients_left
         all_waiting_times.extend(waiting_times)
         all_treatment_times.extend(treatment_times)
+        total_arrival_hours.extend(arrival_hours)
         total_patients_arrived += patients_served + patients_left
 
     # Print statistics
@@ -119,4 +148,4 @@ for num_doctors in [1, 2]:
     print(f"Total Patients Arrived: {total_patients_arrived}")
 
     # Create visualizations
-    visualize_clinic_metrics(all_waiting_times, all_treatment_times, total_patients_left, num_doctors)
+    visualize_clinic_metrics(all_waiting_times, all_treatment_times, total_patients_left, total_arrival_hours, num_doctors)
